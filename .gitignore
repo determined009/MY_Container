@@ -1,0 +1,3 @@
+# do not track .exe files
+
+*.exe
