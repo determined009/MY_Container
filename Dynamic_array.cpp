@@ -6,6 +6,9 @@
 #include<stdexcept>
 #include<cstring>
 #include<climits>
+#include<concepts>
+#include<utility>
+#include<type_traits>
 using std::cout,std::endl;
 template<class T=int>
 class aray{
@@ -44,7 +47,7 @@ class aray{
         cout<<"Exiting Parametric Constructor\n";
     }
     // #endif
-    (const T& obj) noexcept{ // copy constructor
+    aray(const T& obj) noexcept{ // copy constructor
     cout<<"Copy Constructor to gen copy of :"<<obj<<endl;
         ptr= static_cast<T*>(operator new (sizeof(T)*obj.capacity));
         if(!ptr) throw std::bad_alloc();
@@ -73,9 +76,19 @@ class aray{
     cout<<"ASSIGNMENT OPEARTOR "<<obj<<endl;
         if(this==&obj) // avoid self assignment
             return *this; // free momory that is previously pointer to by ptr 
-        delete [] ptr;// so that no memory leak happens and ptr safely point to new memory
-        ptr= new T[obj.size];
-        if(!ptr)  throw std::bad_alloc();
+        if constexpr(std::is_trivially_destructible_v<T> ){
+            operator delete(ptr); // no need to call dctor
+            ptr=nullptr; size=0; capacity=0; 
+            return *this;
+        }
+        else{
+            for(int i=0;i<size;i++)
+                ptr[i].~T();
+            operator delete(ptr);    
+        }
+        ptr= static_cast<T*>(operator new(obj.size*sizeof(T)));
+        if(!ptr) throw std::bad_alloc();
+        
         // copy data 
         for(int i=0;i<obj.size;i++)
             ptr[i]=obj.ptr[i];
@@ -96,7 +109,7 @@ class aray{
     }
     ~aray(){ // Destructor
     cout<<"\nDESTRUCTOR Called for aray "<<*this<<endl;
-        if constexper(std::is_trivially_destructible_v<T>){
+        if constexpr (std::is_trivially_destructible_v<T>) {
             operator delete(ptr); // no need to call dcot
             ptr=nullptr; size=0; capacity=0; // reset to empty state
             return;
@@ -106,27 +119,37 @@ class aray{
         }
         operator delete(ptr);
     }
-    // Unitily Functions
+    // Utility Functions
+    // template<typename K, typename... Args>
+    // concept constructible = std::constructible_from<K, Args...>;
+    // Removed invalid concept declaration; use std::convertible_to directly in requires clause.
+
     template<typename... Arg>
-    void emplace_back(Arg&&... parametre){
+    void emplace_back(Arg&&... parametre) 
+        requires (std::is_constructible_v<T, Arg...> || std::is_convertible_v<Arg..., T>)
+    {
         cout<<"In emplace_back\n";
         // size=1;
-        if(size==capacity) reserve(capacity*2); // construct Object Of datatypr T
-        new(ptr+size) T(std::forward<Arg>(parametre)...);//  directly at the end of vector
+        if(size==capacity) reserve(capacity*2); 
+        // if constexper(std::is_const_v<std::remove_reference_t<Arg>>...) // if const obj uses copy ctor
+        //     // if const obj uses copy ctor
+        //     new(ptr+size) T(Args...);
+        // else
+        //     new(ptr+size) T(std::move((parametre)...));//  directly at the end of vector
+        new(ptr+size) T(std::forward<Arg>(parametre)...); // 
         size++;
-        cout<<"exiting emplace Back\n";
+        cout<<"Exiting emplace_back\n";
     }
-    template<typename F>  // templatic Push_back 
-    void push_back(F&&  ele){   //   this Version copies data(uses c ctor)
+    void push_back(T&&  ele){   //   this Version copies data(uses c ctor)
         cout<<"In Push_back f&& \n";
         if(size==capacity)
             reserve(capacity*2);
         cout<<"Next \n";
         // ptr[size++]=std::forward<F>(ele); // conditionally casts to rvalue_ref and call move ctor
-        new(ptr+size)  T(std::forward<F>(ele)); size++;
+        new(ptr+size)  T(std::forward<T>(ele)); size++;
     }
     void reserve(int new_cap) { // Preallocate memory
-        if( new_cap<=cap) return ;
+        if( new_cap<=capacity) return ;
             // Allocate raw memory (no constructions)
             // if constexpr(std::is_trivially__v<T>) {
             //     T* temp=new T[new_cap];
@@ -141,15 +164,13 @@ class aray{
             //         ptr[i].~T(); // class dctor on move from objects
             //     }
             //     operator delete(ptr); // gives chuck of mem pointed by ptr back to operating system
-            //     ptr = temp;
-            //     capacity = new_cap;
             T* temp=static_cast<T*>(operator new (new_cap*sizeof(T)));
             if(!temp) throw std::bad_alloc();
-            if constexper(std::is_trivially_copyable_v<T>){
+            if constexpr (std::is_trivially_copyable_v<T>){
                     std::memcpy(temp,ptr,size*sizeof(T));
             }
             else{
-                int i=0
+                int i=0;
                 try{
                     for(int i=0;i<size;i++)
                         new(temp+i) T(std::move_if_noexcept(ptr[i]));
@@ -174,7 +195,7 @@ class aray{
     int get_size(){return size;}
     int get_cap(){return capacity;}
     void clear(){
-        if constexper (std::is_trivially_destructible_v<T>){
+        if constexpr (std::is_trivially_destructible_v<T>){
             operator delete(ptr); // no need to call dctor
             ptr=nullptr; size=0; capacity=0;
             return;
