@@ -1,7 +1,7 @@
 // #ifndef Dynamic_array
 // #define Dynamic_array
 // #pragma once
-#include"string header.h"
+// #include"string header.h"
 #include<iostream>
 #include<stdexcept>
 #include<cstring>
@@ -10,6 +10,15 @@
 #include<utility>
 #include<type_traits>
 using std::cout,std::endl;
+ namespace concepts{
+    template<typename type,typename U>
+    concept is_lvalue_non_copyable = std::is_lvalue_reference_v<U> &&  // if lvalue and  copy ctor os deleted ERROR !!
+                         !std::is_copy_constructible_v<std::remove_reference_t<type>> && 
+                         std::is_move_constructible_v<std::remove_reference_t<type>>;
+    template<typename type,typename U>
+    concept is_rvalue_moveable = std::is_rvalue_reference_v<U> && 
+                        std::is_nothrow_move_constructible_v<std::remove_reference_t<type>>;
+    }                    
 template<class T=int>
 class aray{
     T* ptr=nullptr;
@@ -33,17 +42,44 @@ class aray{
     //     }
     // }
     // #if 0
-    template<typename... elet>  // parametre pack
-    aray (elet&&... args){
+                
+    template<typename... Args>  // parametre pack
+    aray (Args&&... args){
         cout<<"In Parametric Constructor\n";
         size=sizeof...(args);
-        capacity=size?size:2; // if size is 0 then set capacity to 2
-        // if( size==capacity){
-        //     reserve(capacity*2);
-        // }
-        ptr= new T(std::forward<elet>(args)...);
-        // new(ptr) T(std::forward<elet>(args)...);
-        // size++;
+        capacity=size?size:2;
+        reserve(capacity);
+        // ptr=static_cast<T*>(operator new (capacity*sizeof(T)));
+        // if(!ptr) throw std::bad_alloc();
+        // int i=0;
+        // ( new(ptr+i++) T(std::forward<Args>(args)),... ); //fold over comma
+        // ptr=static_cast<T*>(operator new (capacity*sizeof(T)));
+        // if(!ptr) throw std::bad_alloc();
+        int index=0;
+        try{
+            // lambda 
+           ([&]<typename Arg_type>(Arg_type&& arg){
+                // using Argtype=decltype(args);
+                if constexpr(concepts::is_lvalue_non_copyable<T,Arg_type>)
+                    (void) new(ptr + index++) T(std::move(arg));
+
+                else if constexpr (concepts::is_rvalue_moveable<T,Arg_type>)
+                    (void) new(ptr + index++) T(std::move(arg));
+
+                else
+                    (void) new(ptr+ index++) T(std::forward<Arg_type>(arg));
+           }(std::forward<Args>(args)),...); // IIFE (Immediately Invoked Function Expression)
+
+            // (new (ptr+index ++ ) T(std::forward<elet>(args)),...); // fold expression over comma 
+        }
+        catch(...){
+            for(size_t i=0;i<index;i++){
+                ptr[i].~T();
+            }
+            operator delete(ptr);
+            cout<<"Error in constructing elements\n";
+            throw;
+        }
         cout<<"Exiting Parametric Constructor\n";
     }
     // #endif
@@ -67,31 +103,30 @@ class aray{
         ptr=static_cast<T*>(operator new(obj.size*sizeof(T)));
         if(!ptr) throw std::bad_alloc();
         for(int i=0;i<obj.size;i++){
-            new(&ptr[i]) T(&obj.ptr[i]); // call copy ctor of T
-        }
+            (void) new(&ptr[i]) T(obj.ptr[i]); // call copy ctor of T
+        } 
         size=obj.size; capacity=obj.capacity; 
         return *this;
     }
-    T& operator=(T&& obj)noexcept{   //------------------- MOve Assignment operator
+    aray& operator=(aray&& obj)noexcept{   //------------------- MOve Assignment operator
     cout<<"ASSIGNMENT OPEARTOR "<<obj<<endl;
         if(this==&obj) // avoid self assignment
             return *this; // free momory that is previously pointer to by ptr 
         if constexpr(std::is_trivially_destructible_v<T> ){
             operator delete(ptr); // no need to call dctor
-            ptr=nullptr; size=0; capacity=0; 
-            return *this;
+            ptr=nullptr; 
         }
         else{
             for(int i=0;i<size;i++)
                 ptr[i].~T();
             operator delete(ptr);    
+            ptr= nullptr;
         }
         ptr= static_cast<T*>(operator new(obj.size*sizeof(T)));
         if(!ptr) throw std::bad_alloc();
-        
-        // copy data 
+        // Move data 
         for(int i=0;i<obj.size;i++)
-            ptr[i]=obj.ptr[i];
+            ptr[i]=std::move(obj.ptr[i]);
         size=obj.size;
         capacity=obj.capacity;
         return *this;
@@ -108,7 +143,7 @@ class aray{
         obj.ptr=nullptr; obj.size=0;obj.capacity=0;  // Left in empty state
     }
     ~aray(){ // Destructor
-    cout<<"\nDESTRUCTOR Called for aray "<<*this<<endl;
+    // cout<<"\nDESTRUCTOR Called for aray "<<*this<<endl;
         if constexpr (std::is_trivially_destructible_v<T>) {
             operator delete(ptr); // no need to call dcot
             ptr=nullptr; size=0; capacity=0; // reset to empty state
@@ -184,8 +219,9 @@ class aray{
             }
             for(int i=0;i<size;i++)
                 ptr[i].~T();
-            capacity=new_cap;    
+            capacity=new_cap;
             operator delete(ptr);
+            ptr=temp;
     }
     void push_(T i){
         if(size==capacity)
@@ -195,14 +231,9 @@ class aray{
     int get_size(){return size;}
     int get_cap(){return capacity;}
     void clear(){
-        if constexpr (std::is_trivially_destructible_v<T>){
-            operator delete(ptr); // no need to call dctor
-            ptr=nullptr; size=0; capacity=0;
-            return;
-        }
-        for(int i=0;i<size;i++){
-            ptr[i].~T(); // call drec of object T(beavuse in case if it it self handle resourses)
-        }
+        if constexpr (!std::is_trivially_destructible_v<T>)
+            for(int i=0;i<size;i++)
+                ptr[i].~T(); // call drec of object T(beavuse in case if it it self handle resourses)
         operator delete(ptr);// Just give back the memory to sys poibterd by ptr (Even the element it self have been)
         ptr= nullptr;size=0; capacity=0;
     }
@@ -273,7 +304,7 @@ class aray{
 int main()
 {
     // aray arr={1,2,3,4,5,6,7};
-    aray<std::string> s{"Hellow"};
+    aray<std::string> s{"Hellow","World "};
     // aray a1=std::move(arr);
     // aray a1=aray({10,20,30}); // Copy elision
     // aray a1= std::move(aray({10,20,30,40})); // we can steal (MOVE ) temp nameless aray into a1
@@ -282,7 +313,9 @@ int main()
     s.push_back("Jk rowling ");
     // s[2]=str("world change ");
     s.emplace_back("I am Here Aren't YOU");
-    cout<< s<<endl;
+    for(int i=0;i<s.get_size();i++){
+        cout<<s[i]<<" ";
+    }
     return 0;
 }
 // #endif // MY_HEADER_H
